@@ -1,11 +1,12 @@
 """RefGAP reference-logit correction."""
 
 from refgap.correct import (
+    EDIT_BIAS_CLIP_MAX,
+    EDIT_BIAS_CLIP_MIN,
     EPS_B,
     GAMMA_EDIT,
     GAMMA_KEEP,
-    RHO_CLAMP_MAX,
-    RHO_CLAMP_MIN,
+    RHO_FLOOR,
     TAU_B,
     TAU_B_BAR,
     ReferenceMass,
@@ -15,11 +16,12 @@ from refgap.correct import (
 )
 
 __all__ = [
+    "EDIT_BIAS_CLIP_MAX",
+    "EDIT_BIAS_CLIP_MIN",
     "EPS_B",
     "GAMMA_EDIT",
     "GAMMA_KEEP",
-    "RHO_CLAMP_MAX",
-    "RHO_CLAMP_MIN",
+    "RHO_FLOOR",
     "ReferenceMass",
     "TAU_B",
     "TAU_B_BAR",

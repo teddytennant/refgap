@@ -17,9 +17,6 @@ KEEP_OFFSET = -0.32437208648653154
 REF_SOFTMAX_RATIO = 0.36787944117144233
 REST_SOFTMAX_RATIO = 0.4723665527410147
 
-# 0.6 * ln(1e12) = 0.6 * 12 * ln(10). Offset after clamping rho to 1e-12.
-CLAMPED_EDIT_OFFSET = 16.578612669557128
-
 
 def _uniform_masks():
     edit_mask = jnp.array([True, False])
@@ -209,20 +206,24 @@ def test_both_regions_empty_leaves_logits_unchanged():
     assert float(corrected[0, 2]) == pytest.approx(3.0)
 
 
-def test_rho_below_clamp_uses_one_e_minus_twelve():
-    # One reference key at 0 and one rest key at 40.
-    # rho = 1 / (1 + exp(40)) is far below 1e-12, so the guard clamps it.
-    # Edit offset is then 0.6 * ln(1e12), not 0.6 * ln(1/rho) and not the
-    # appendix clip of 8.
-    logits = jnp.array([[0.0, 40.0]])
-    corrected = apply_correction(
-        logits,
-        jnp.array([True]),
-        jnp.array([False]),
-        jnp.array([True, False]),
-    )
-    assert float(corrected[0, 0]) == pytest.approx(CLAMPED_EDIT_OFFSET, abs=1e-4)
-    assert float(corrected[0, 1]) == pytest.approx(40.0)
+def test_mass_one_e_minus_twelve_floors_and_clips_edit_bias():
+    # Rest logit ln(1e12 - 1) puts the reference mass at 1e-12.
+    # Appendix A floors that mass to 1e-6 before the log.
+    # Unclipped edit bias is 0.6 * ln(1e6) = 8.289306334778564, then clipped to 8.
+    # Keep-side bias is -0.8 * ln(1e6) = -11.052408446371451 and is not clipped.
+    logits = jnp.array([[0.0, 27.63102111592755], [0.0, 27.63102111592755]])
+    edit_mask = jnp.array([True, False])
+    keep_mask = jnp.array([False, True])
+    reference_mask = jnp.array([True, False])
+    mass = reference_mass(logits, reference_mask, edit_mask, keep_mask)
+    assert float(mass.rho_bar_edit) == pytest.approx(1e-12)
+    assert float(mass.rho_bar_keep) == pytest.approx(1e-12)
+    corrected = apply_correction(logits, edit_mask, keep_mask, reference_mask)
+    assert corrected.shape == (2, 2)
+    assert float(corrected[0, 0]) == pytest.approx(8.0)
+    assert float(corrected[0, 1]) == pytest.approx(27.63102111592755)
+    assert float(corrected[1, 0]) == pytest.approx(-11.052408446371451)
+    assert float(corrected[1, 1]) == pytest.approx(27.63102111592755)
 
 
 def test_heads_axis_shares_one_region_offset():

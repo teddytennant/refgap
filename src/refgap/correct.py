@@ -33,11 +33,12 @@ TAU_B = 2.7
 TAU_B_BAR = 3.7
 EPS_B = 1e-6
 
-# Numerical guard, not part of the paper. The paper assumes rho in (0, 1).
-# Appendix A instead floors region masses at 1e-6 and clips the edit bias to
-# [0, 8]. Those appendix safeguards are not applied here.
-RHO_CLAMP_MIN = 1e-12
-RHO_CLAMP_MAX = 1.0 - 1e-12
+# Appendix A floors both region masses at 1e-6 before the bias logarithm.
+# Softmax masses cannot exceed 1, so there is no upper clamp.
+RHO_FLOOR = 1e-6
+# Clip only the edit-side bias. The keep-side bias is not clipped.
+EDIT_BIAS_CLIP_MIN = 0.0
+EDIT_BIAS_CLIP_MAX = 8.0
 
 
 class ReferenceMass(NamedTuple):
@@ -95,7 +96,9 @@ def apply_correction(logits, edit_mask, keep_mask, reference_mask):
 
     The offset uses the deployed coefficients gamma_edit = 0.6 and
     gamma_keep = 0.8. It is recomputed from these logits (the online rule).
-    It does not depend on the layer-selection thresholds.
+    It does not depend on the layer-selection thresholds. Appendix A floors
+    both region masses at 1e-6 before the logarithm and clips the edit-side
+    bias to [0, 8]. The keep-side bias is not clipped.
 
     An empty edit or keep region yields nan for that region's mass and does
     not write an offset for it. The other region is still corrected from its
@@ -111,6 +114,11 @@ def apply_correction(logits, edit_mask, keep_mask, reference_mask):
     mass = reference_mass(logits, reference_mask, edit_mask, keep_mask)
     b_edit = _region_bias(mass.rho_bar_edit, GAMMA_EDIT, sign=1.0)
     b_keep = _region_bias(mass.rho_bar_keep, GAMMA_KEEP, sign=-1.0)
+    b_edit = jnp.clip(
+        b_edit,
+        jnp.asarray(EDIT_BIAS_CLIP_MIN, dtype=b_edit.dtype),
+        jnp.asarray(EDIT_BIAS_CLIP_MAX, dtype=b_edit.dtype),
+    )
     query_offset = _query_offsets(edit_mask, keep_mask, b_edit, b_keep, logits.dtype)
     return _add_reference_offset(logits, query_offset, reference_mask)
 
@@ -223,14 +231,14 @@ def _region_mean(rho, query_mask):
 
 
 def _region_bias(rho_bar, gamma, sign):
-    """Eq. (5) for one region. nan mass stays nan; no finite offset is invented."""
+    """Eq. (5) for one region. Floor mass at 1e-6. nan mass stays nan."""
 
     dtype = rho_bar.dtype
-    clamped = jnp.clip(rho_bar, RHO_CLAMP_MIN, RHO_CLAMP_MAX)
+    floored = jnp.maximum(rho_bar, jnp.asarray(RHO_FLOOR, dtype=dtype))
     bias = (
         jnp.asarray(sign, dtype=dtype)
         * jnp.asarray(gamma, dtype=dtype)
-        * jnp.log(1.0 / clamped)
+        * jnp.log(1.0 / floored)
     )
     return jnp.where(jnp.isfinite(rho_bar), bias, jnp.array(jnp.nan, dtype=dtype))
 
